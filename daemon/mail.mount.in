@@ -1,0 +1,5 @@
+[Mount]
+Type=mail
+Exec=@libexecdir@/gvfsd-mail
+AutoMount=true
+
