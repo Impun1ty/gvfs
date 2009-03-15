@@ -31,3 +31,5 @@ core
 compile
 gtk-doc.make
 *.pc
+*.swo
+*.swp
