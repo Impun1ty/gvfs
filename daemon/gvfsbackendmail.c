@@ -85,7 +85,7 @@ g_vfs_backend_mail_init (GVfsBackendMail *mail_backend)
 
   /* translators: This is the name of the backend */
   g_vfs_backend_set_display_name (backend, _("Mail"));
-  g_vfs_backend_set_icon_name (backend, "user-mail");
+  g_vfs_backend_set_icon_name (backend, "stock_mail");
   g_vfs_backend_set_user_visible (backend, FALSE);
 }
 
@@ -107,9 +107,38 @@ do_open_for_read (GVfsBackend *backend,
                   GVfsJobOpenForRead *job,
                   const char *filename)
 {
-  g_vfs_job_failed (G_VFS_JOB (job), G_IO_ERROR,
-                    G_IO_ERROR_IS_DIRECTORY,
-                    _("Can't open directory"));
+  char *path;
+  GFile *file;
+  GFileInputStream *stream;
+  GError *error;
+  GVfsBackendMail *mail_backend = G_VFS_BACKEND_MAIL (backend);
+
+  if (!g_strcmp0(filename,"/"))
+    {
+      g_vfs_job_failed (G_VFS_JOB (job), G_IO_ERROR,
+                        G_IO_ERROR_IS_DIRECTORY,
+                        _("Can't open directory"));
+    }
+  else
+    {
+      path = g_build_filename (mail_backend->maildir, "cur", filename, NULL);
+      file = g_file_new_for_path (path);
+      g_free (path);
+      stream = g_file_read (file,G_VFS_JOB(job)->cancellable,&error);
+      g_object_unref (file);
+
+      if (stream)
+        {
+          g_vfs_job_open_for_read_set_handle (job, stream);
+          g_vfs_job_open_for_read_set_can_seek  (job, g_seekable_can_seek (G_SEEKABLE (stream)));
+          g_vfs_job_succeeded (G_VFS_JOB (job));
+        }
+      else
+        {
+          g_vfs_job_failed_from_error (G_VFS_JOB (job), error);
+          g_error_free (error);
+        }
+    }
 }
 
 static void
