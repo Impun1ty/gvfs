@@ -202,13 +202,16 @@ update_file_info (GFileInfo *info, GVfsJob *job, char *maildir)
   GFile *file;
   GFileInputStream *stream;
   GDataInputStream *datastream;
-  char *path, *line, *name=NULL, *from=NULL;
+  char *path, *line, *name=NULL, *from=NULL, *filename;
+  GError *error;
 
-  path = g_build_filename (maildir, "cur", g_file_info_get_name(info), NULL);
+  filename = g_file_info_get_name(info);
+
+  path = g_build_filename (maildir, "cur", filename, NULL);
   file = g_file_new_for_path (path);
   g_free (path);
 
-  if (file && (stream = g_file_read (file,job->cancellable,NULL)))
+  if (file && (stream = g_file_read (file,job->cancellable,&error)))
     {
       datastream = g_data_input_stream_new (G_INPUT_STREAM (stream));
       g_object_unref(stream);
@@ -218,16 +221,10 @@ update_file_info (GFileInfo *info, GVfsJob *job, char *maildir)
           if(!(line = g_data_input_stream_read_line(datastream,0,0,0)))
             break;
 
-          //if(line == g_strrstr(line,"From: ")) from = g_strdup("abc");
-          if(line == g_strrstr(line,"Subject: ")) name = g_strdup(line+9);
-          //if(line == g_strrstr(line,"From: ")){ from = g_strdup(line); g_print("########## %s\n",from);}
-          //if(line == g_strrstr(line,"From: ")) from = g_convert("abc",-1,"utf-8","iso-8895-1",NULL,NULL,error);
+          if(g_str_has_prefix(line,"Subject: ")) name = g_strdup(line+9);
+          if(g_str_has_prefix(line,"From: ")) from = g_strdup(line+5);
 
           g_free (line);
-
-          //if (error){ g_print(error->message);
-          //g_error_free (error);}
-
         }
 
       g_object_unref(datastream);
@@ -235,16 +232,12 @@ update_file_info (GFileInfo *info, GVfsJob *job, char *maildir)
   g_object_unref(file);
 
   if (name && g_utf8_validate(name, -1, NULL))
-    {
-      g_file_info_set_attribute_string(info,"standard::display-name",name);
-    }
-   g_free (name);
+    g_file_info_set_attribute_string(info,"standard::display-name",name);
+  g_free (name);
 
-  g_file_info_set_attribute_string(info,"mail::sender","foo@bla.com");
- // if (from && g_utf8_validate(from, -1, NULL))
-//    g_file_info_set_attribute_string(info,"mail::sender",from);
-//  g_free (from);
-
+  if (from && g_utf8_validate(from, -1, NULL))
+    g_file_info_set_attribute_string(info,"mail::sender",from);
+  g_free (from);
 }
 
 static void
@@ -308,7 +301,7 @@ do_query_info (GVfsBackend *backend,
   GVfsBackendMail *mail_backend = G_VFS_BACKEND_MAIL (backend);
 
   /* The mail:/// root */
-  if (!g_strcmp0(filename,"/"))
+  if ((!g_strcmp0(filename,"/")) || (!g_strcmp0(filename,"")))
     {
       g_file_info_set_file_type (info, G_FILE_TYPE_DIRECTORY);
       g_file_info_set_name (info, "/");
@@ -318,8 +311,34 @@ do_query_info (GVfsBackend *backend,
     }
   else
     {
-      g_file_info_set_name (info, filename+1);
-      update_file_info(info, G_VFS_JOB(job), mail_backend->maildir);
+      GFile *file;
+      GFileInfo *local_info;
+      char *path;
+      GError *error;
+      char *basename;
+
+      basename = g_path_get_basename (filename);
+
+      path = g_build_filename (mail_backend->maildir, "cur", basename, NULL);
+      file = g_file_new_for_path (path);
+      g_free (path);
+
+      error = NULL;
+      local_info = g_file_query_info (file,
+                                      job->attributes,
+                                      job->flags,
+                                      G_VFS_JOB (job)->cancellable,
+                                      &error);
+      g_object_unref (file);
+
+      if (local_info)
+        {
+          g_file_info_copy_into (local_info, info);
+          g_file_info_set_name (info, basename);
+          update_file_info(info,job,mail_backend->maildir);
+          g_object_unref (local_info);
+        }
+      g_free (basename);
     }
 
   g_vfs_job_succeeded (G_VFS_JOB (job));
