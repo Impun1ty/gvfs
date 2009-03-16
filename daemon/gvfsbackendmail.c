@@ -202,45 +202,49 @@ update_file_info (GFileInfo *info, GVfsJob *job, char *maildir)
   GFile *file;
   GFileInputStream *stream;
   GDataInputStream *datastream;
-  char *path, *name;
+  char *path, *line, *name=NULL, *from=NULL;
 
   path = g_build_filename (maildir, "cur", g_file_info_get_name(info), NULL);
   file = g_file_new_for_path (path);
   g_free (path);
 
-  if(stream = g_file_read (file,job->cancellable,NULL))
+  if (file && (stream = g_file_read (file,job->cancellable,NULL)))
     {
       datastream = g_data_input_stream_new (G_INPUT_STREAM (stream));
       g_object_unref(stream);
 
-      while(name = g_data_input_stream_read_line(datastream,0,0,0))
+      while (!(name && from))
         {
-            if(name == g_strrstr(name,"Subject: "))
-              {
-                if (g_utf8_validate(name+9, -1, NULL))
-                  {
-                    g_file_info_set_display_name(info,name+9);
-                  }
-                else
-                  {
-                    g_file_info_set_display_name(info,"invalid utf-8");
-                  }
+          if(!(line = g_data_input_stream_read_line(datastream,0,0,0)))
+            break;
 
-                g_free (name);
-                break;
-              }
-            g_free (name);
+          //if(line == g_strrstr(line,"From: ")) from = g_strdup("abc");
+          if(line == g_strrstr(line,"Subject: ")) name = g_strdup(line+9);
+          //if(line == g_strrstr(line,"From: ")){ from = g_strdup(line); g_print("########## %s\n",from);}
+          //if(line == g_strrstr(line,"From: ")) from = g_convert("abc",-1,"utf-8","iso-8895-1",NULL,NULL,error);
+
+          g_free (line);
+
+          //if (error){ g_print(error->message);
+          //g_error_free (error);}
+
         }
 
       g_object_unref(datastream);
     }
-  else
+  g_object_unref(file);
+
+  if (name && g_utf8_validate(name, -1, NULL))
     {
-      g_file_info_set_display_name(info,"error");
+      g_file_info_set_attribute_string(info,"standard::display-name",name);
     }
+   g_free (name);
 
   g_file_info_set_attribute_string(info,"mail::sender","foo@bla.com");
-  g_object_unref(file);
+ // if (from && g_utf8_validate(from, -1, NULL))
+//    g_file_info_set_attribute_string(info,"mail::sender",from);
+//  g_free (from);
+
 }
 
 static void
