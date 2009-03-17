@@ -37,6 +37,8 @@
 #include <gio/gunixmounts.h>
 #include <glib/gurifuncs.h>
 
+#include <gmime/gmime.h>
+
 #include "gvfsbackendmail.h"
 #include "gvfsmonitor.h"
 #include "gvfsjobopenforread.h"
@@ -54,6 +56,8 @@
 #include "gvfsjobenumerate.h"
 #include "gvfsjobcreatemonitor.h"
 #include "gvfsdaemonprotocol.h"
+
+const gchar *charsets[] = { "UTF-8" , NULL };
 
 
 struct _GVfsBackendMail
@@ -74,11 +78,14 @@ g_vfs_backend_mail_finalize (GObject *object)
 
   if (G_OBJECT_CLASS (g_vfs_backend_mail_parent_class)->finalize)
     (*G_OBJECT_CLASS (g_vfs_backend_mail_parent_class)->finalize) (object);
+  g_mime_shutdown();
 }
 
 static void
 g_vfs_backend_mail_init (GVfsBackendMail *mail_backend)
 {
+  g_mime_init(NULL);
+  g_mime_set_user_charsets(charsets);
   GVfsBackend *backend = G_VFS_BACKEND (mail_backend);
 
   mail_backend->maildir = "/home/christian/Mail/Initcrash/INBOX/";
@@ -87,6 +94,7 @@ g_vfs_backend_mail_init (GVfsBackendMail *mail_backend)
   g_vfs_backend_set_display_name (backend, _("Mail"));
   g_vfs_backend_set_icon_name (backend, "stock_mail");
   g_vfs_backend_set_user_visible (backend, FALSE);
+
 }
 
 static void
@@ -199,45 +207,38 @@ do_close_read (GVfsBackend *backend,
 static void
 update_file_info (GFileInfo *info, GVfsJob *job, char *maildir)
 {
-  GFile *file;
-  GFileInputStream *stream;
-  GDataInputStream *datastream;
-  char *path, *line, *name=NULL, *from=NULL, *filename;
-  GError *error;
+  char *path, *name, *from;
+  char *filename;
+  FILE *fp;
+  GMimeStream *mime_stream;
+  GMimeParser *parser;
+  GMimeMessage *message;
 
-  filename = g_file_info_get_name(info);
+  filename = g_file_info_get_name (info);
 
   path = g_build_filename (maildir, "cur", filename, NULL);
-  file = g_file_new_for_path (path);
+  fp = fopen (path,"r+");
   g_free (path);
+  if(!fp) return;
 
-  if (file && (stream = g_file_read (file,job->cancellable,&error)))
-    {
-      datastream = g_data_input_stream_new (G_INPUT_STREAM (stream));
-      g_object_unref(stream);
+  mime_stream = g_mime_stream_file_new (fp);
+  parser = g_mime_parser_new_with_stream(mime_stream);
+  g_object_unref(mime_stream);
+  message = g_mime_parser_construct_message(parser);
+  g_object_unref(parser);
 
-      while (!(name && from))
-        {
-          if(!(line = g_data_input_stream_read_line(datastream,0,0,0)))
-            break;
-
-          if(g_str_has_prefix(line,"Subject: ")) name = g_strdup(line+9);
-          if(g_str_has_prefix(line,"From: ")) from = g_strdup(line+5);
-
-          g_free (line);
-        }
-
-      g_object_unref(datastream);
-    }
-  g_object_unref(file);
+  name = g_mime_utils_header_decode_phrase(g_mime_message_get_subject(message));
+  from = g_mime_utils_header_decode_phrase(g_mime_message_get_sender(message));
 
   if (name && g_utf8_validate(name, -1, NULL))
     g_file_info_set_attribute_string(info,"standard::display-name",name);
-  g_free (name);
+  g_free(name);
 
   if (from && g_utf8_validate(from, -1, NULL))
     g_file_info_set_attribute_string(info,"mail::sender",from);
-  g_free (from);
+  g_free(from);
+
+  g_object_unref(message);
 }
 
 static void
