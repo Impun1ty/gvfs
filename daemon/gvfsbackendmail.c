@@ -38,6 +38,7 @@
 #include <glib/gurifuncs.h>
 
 #include <gmime/gmime.h>
+#include <gconf/gconf-client.h>
 
 #include "gvfsbackendmail.h"
 #include "gvfsmonitor.h"
@@ -79,21 +80,36 @@ g_vfs_backend_mail_finalize (GObject *object)
   if (G_OBJECT_CLASS (g_vfs_backend_mail_parent_class)->finalize)
     (*G_OBJECT_CLASS (g_vfs_backend_mail_parent_class)->finalize) (object);
   g_mime_shutdown();
+  g_free(backend->maildir);
 }
 
 static void
 g_vfs_backend_mail_init (GVfsBackendMail *mail_backend)
 {
+  GConfClient *gclient;
+  GError *error = NULL;
+
+  if ((gclient = gconf_client_get_default()))
+      mail_backend->maildir = gconf_client_get_string(gclient,"/desktop/gnome/mail/maildir",&error);
+
+  if(!mail_backend->maildir)
+  {
+    mail_backend->maildir = g_strdup("/home/christian/Mail/Initcrash/INBOX/");
+    gconf_client_set_string(gclient,"/desktop/gnome/mail/maildir",mail_backend->maildir,&error);
+  }
+  g_object_unref(gclient);
+
+  g_print("maildir: %s\n",mail_backend->maildir);
+
   g_mime_init(NULL);
   g_mime_set_user_charsets(charsets);
   GVfsBackend *backend = G_VFS_BACKEND (mail_backend);
 
-  mail_backend->maildir = "/home/christian/Mail/Initcrash/INBOX/";
 
   /* translators: This is the name of the backend */
   g_vfs_backend_set_display_name (backend, _("Mail"));
   g_vfs_backend_set_icon_name (backend, "stock_mail");
-  g_vfs_backend_set_user_visible (backend, FALSE);
+  g_vfs_backend_set_user_visible (backend, TRUE);
 
 }
 
@@ -207,12 +223,14 @@ do_close_read (GVfsBackend *backend,
 static void
 update_file_info (GFileInfo *info, GVfsJob *job, char *maildir)
 {
-  char *path, *name, *from;
+  char *path, *subject, *from;
   char *filename;
+  char **filename_parts;
   FILE *fp;
   GMimeStream *mime_stream;
   GMimeParser *parser;
   GMimeMessage *message;
+  GIcon *icon;
 
   filename = g_file_info_get_name (info);
 
@@ -227,18 +245,40 @@ update_file_info (GFileInfo *info, GVfsJob *job, char *maildir)
   message = g_mime_parser_construct_message(parser);
   g_object_unref(parser);
 
-  name = g_mime_utils_header_decode_phrase(g_mime_message_get_subject(message));
+  subject = g_mime_utils_header_decode_phrase(g_mime_message_get_subject(message));
   from = g_mime_utils_header_decode_phrase(g_mime_message_get_sender(message));
+  //from = g_mime_utils_header_decode_phrase(g_mime_message_get_header(message,"X-Label"));
 
-  if (name && g_utf8_validate(name, -1, NULL))
-    g_file_info_set_attribute_string(info,"standard::display-name",name);
-  g_free(name);
+  if (subject && g_strcmp0("",subject) && g_utf8_validate(subject, -1, NULL))
+    {
+      g_file_info_set_attribute_string(info,"standard::display-name",subject);
+      g_file_info_set_attribute_string(info,"mail::subject",subject);
+    }
+  else
+    {
+      g_file_info_set_attribute_string(info,"standard::display-name",_("no subject"));
+      g_file_info_set_attribute_string(info,"mail::subject",from);
+    }
+  g_free(subject);
 
   if (from && g_utf8_validate(from, -1, NULL))
-    g_file_info_set_attribute_string(info,"mail::sender",from);
+    g_file_info_set_attribute_string(info,"mail::from",from);
   g_free(from);
 
   g_object_unref(message);
+
+  g_file_info_set_content_type (info, "message/rfc822");
+
+  filename_parts = g_strsplit(filename,":2,",2);
+  if(g_strrstr(filename_parts[1],"R"))
+    icon = g_themed_icon_new ("mail-replied");
+  else if(g_strrstr(filename_parts[1],"S"))
+    icon = g_themed_icon_new ("mail-read");
+  else
+    icon = g_themed_icon_new ("mail-unread");
+  g_strfreev(filename_parts);
+  g_file_info_set_icon (info, icon);
+  g_object_unref (icon);
 }
 
 static void
@@ -304,11 +344,16 @@ do_query_info (GVfsBackend *backend,
   /* The mail:/// root */
   if ((!g_strcmp0(filename,"/")) || (!g_strcmp0(filename,"")))
     {
+      GIcon *icon;
       g_file_info_set_file_type (info, G_FILE_TYPE_DIRECTORY);
       g_file_info_set_name (info, "/");
       /* Translators: this is the display name of the backend */
       g_file_info_set_display_name (info, _("Mail"));
       g_file_info_set_content_type (info, "inode/directory");
+
+      icon = g_themed_icon_new ("stock_mail");
+      g_file_info_set_icon (info, icon);
+      g_object_unref (icon);
     }
   else
     {

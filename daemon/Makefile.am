@@ -275,9 +275,10 @@ gvfsd_mail_CPPFLAGS = \
 	-DBACKEND_HEADER=gvfsbackendmail.h \
 	-DDEFAULT_BACKEND_TYPE=mail \
 	-DMAX_JOB_THREADS=10 \
+	$(GCONF_CFLAGS) \
 	-DBACKEND_TYPES='"mail", G_VFS_TYPE_BACKEND_MAIL,'
 
-gvfsd_mail_LDADD = $(libraries)
+gvfsd_mail_LDADD = $(libraries) $(GCONF_LIBS)
 # END mail backend
 
 
